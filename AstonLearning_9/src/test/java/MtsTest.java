@@ -1,78 +1,79 @@
 import io.github.bonigarcia.wdm.WebDriverManager;
+import org.example.MtsMainPage;
+import org.example.PaymentFramePage;
 import org.junit.jupiter.api.*;
-import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
-import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
-import org.openqa.selenium.support.ui.ExpectedConditions;
-import org.openqa.selenium.support.ui.WebDriverWait;
-import java.time.Duration;
+import org.openqa.selenium.chrome.ChromeOptions;
+
 import java.util.List;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 public class MtsTest {
     private WebDriver driver;
-    private WebDriverWait wait;
-
+    private MtsMainPage mainPage;
+    private PaymentFramePage paymentPage;
     @BeforeEach
     void setUp() {
         WebDriverManager.chromedriver().setup();
         driver = new ChromeDriver();
         driver.manage().window().maximize();
         driver.get("https://www.mts.by");
+        mainPage = new MtsMainPage(driver);
+        paymentPage = new PaymentFramePage(driver);
     }
-
     @Test
-    @DisplayName("Проверка формы Онлайн пополнение без комисси")
-    void testPaymentForm() {
-        //Проверить название указанного блока
-        WebElement titleElement = driver.findElement(By.xpath("//div[contains(@class, 'pay__wrapper')]//h2"));
-        String actualTitle = titleElement.getText()
-                .replace("\n", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
-        String expectedTitle = "Онлайн пополнение без комиссии";
-        Assertions.assertEquals(expectedTitle, actualTitle,
-                "Текст заголовка блока не соответствует ожидаемому");
+    @DisplayName("1. Проверка названия блока, логотипов и ссылки Подробнее")
+    void testMainBlockElements() {
+        assertEquals("Онлайн пополнение без комиссии", mainPage.getBlockTitle());
+        assertTrue(mainPage.areLogosPresent(), "Логотипы отсутствуют");
 
-        //Проверить наличие логотипов платёжных систем
-        WebElement partnersBlock = driver.findElement(By.className("pay__partners"));
-        List<WebElement> logos = partnersBlock.findElements(By.tagName("img"));
-        Assertions.assertEquals(5, logos.size(), "Количество логотипов не соответствует ожидаемому");
+        String currentUrl = driver.getCurrentUrl();
+        mainPage.clickDetails();
+        assertNotEquals(currentUrl, driver.getCurrentUrl(), "Ссылка 'Подробнее' не изменила URL");
+    }
+    @Test
+    @DisplayName("2. Проверка плейсхолдеров для всех вариантов оплаты")
+    void testPlaceholdersForAllOptions() {
 
-        //Проверить работу ссылки «Подробнее о сервисе»
-        WebElement detailsLink = driver.findElement(By.linkText("Подробнее о сервисе"));
-        String expectedPartUrl = "/help/poryadok-oplaty-i-bezopasnost-internet-platezhey/";
-        String actualHref = detailsLink.getAttribute("href");
-        assertTrue(actualHref.contains(expectedPartUrl), "Ссылка ведет на некорректный адрес");
-        detailsLink.click();
+        List<String> connection = mainPage.getActiveFormPlaceholders();
+        assertTrue(connection.containsAll(List.of("Номер телефона", "Сумма", "E-mail для отправки чека")));
 
-        WebElement pageHeader = wait.until(ExpectedConditions.visibilityOfElementLocated(By.tagName("h3")));
-        String actualHeader = pageHeader.getText().trim();
-        String expectedHeader = "Оплата банковской картой";
-        Assertions.assertEquals(expectedHeader, actualHeader,
-                String.format("Заголовок страницы не совпадает. Ожидали: '%s', получили: '%s'\", expectedHeader, actualHeader"));
+        mainPage.selectPaymentOption("Домашний интернет");
+        List<String> internet = mainPage.getActiveFormPlaceholders();
+        assertTrue(internet.containsAll(List.of("Номер абонента", "Сумма", "E-mail для отправки чека")));
 
-        //Заполнить поля и проверить работу кнопки «Продолжить» (проверяем только вариант «Услуги связи», номер для теста 297777777)
-        WebElement phoneInput = driver.findElement(By.id("connection-phone"));
-        phoneInput.click();
-        phoneInput.sendKeys("297777777");
+        mainPage.selectPaymentOption("Рассрочка");
+        List<String> installment = mainPage.getActiveFormPlaceholders();
+        assertTrue(installment.containsAll(List.of("Номер счета", "Сумма", "E-mail для отправки чека")));
 
-        WebElement sumInput = driver.findElement(By.id("connection-sum"));
-        sumInput.click();
-        sumInput.sendKeys("10");
+        mainPage.selectPaymentOption("Задолженность");
+        List<String> arrears = mainPage.getActiveFormPlaceholders();
+        assertTrue(arrears.containsAll(List.of("Номер счета", "Сумма", "E-mail для отправки чека")));
+    }
+    @Test
+    @DisplayName("3. Проверка работы формы и окна оплаты (Услуги связи)")
+    void testFullPaymentCycle() {
+        String phone = "297777777";
+        String sum = "10.00";
 
-        WebElement submitButton = driver.findElement(By.xpath("//button[text()='Продолжить']"));
-        wait.until(ExpectedConditions.elementToBeClickable(submitButton));
-        submitButton.click();
-        boolean isIframePresent = wait.until(ExpectedConditions.presenceOfAllElementsLocatedBy(By.tagName("iframe"))).size() > 0;
-        assertTrue(isIframePresent, "Окно оплаты не открылось");
+        mainPage.fillServiceForm(phone, "10", "test@test.com");
+        mainPage.clickContinue();
+        paymentPage.switchToFrame();
+
+        assertTrue(paymentPage.getAmountHeader().contains(sum));
+        assertTrue(paymentPage.getAmountButton().contains(sum));
+        assertTrue(paymentPage.getPhoneText().contains(phone));
+
+        assertEquals("Номер карты", paymentPage.getCardLabel());
+        assertEquals("Срок действия", paymentPage.getExpiryLabel());
+        assertEquals("CVC", paymentPage.getCvcLabel());
+        assertEquals("Имя держателя (как на карте)", paymentPage.getHolderLabel());
+        assertTrue(paymentPage.areIconsPresent(), "Иконки платежных систем не найдены");
     }
     @AfterEach
     void tearDown() {
-        if (driver != null) {
-            driver.quit();
-        }
+        if (driver != null) driver.quit();
     }
 }
-
